@@ -1,1 +1,1 @@
-Graph neural networks heuristics for combinatorial optimisation problems.
+Graph neural networks heuristics for combinatorial optimisation problems
