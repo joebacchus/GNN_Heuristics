@@ -1,4 +1,3 @@
 Graph neural networks heuristics for combinatorial optimisation problems
 
-To run:
-	`pixi run python app.py`
+Run using `pixi run python app.py` from the folder directory.
