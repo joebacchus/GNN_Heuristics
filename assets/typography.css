@@ -1,25 +1,28 @@
 
 body {
-    #background-color: #ffffff;
+    background-color: #ffffff;
     padding: 10px;
 }
 
 .section {
     border-radius: 10px;
     border: 1px solid #ececec;
-    background-color: #ffffff;
+    #background-color: #ffffff;
     padding: 10px;
     margin-bottom: 5px;
+    font-size: 10px;
 }
 
 .graph {
     border-radius: 10px;
-    border: 1px solid #ececec;
+    border: 0px solid #ececec;
     /* padding: 10px; */
-    margin-bottom: 5px;
+    margin-bottom: -10px;
+    margin-left: -10px;
 }
 
 .info {
+    margin-top: 10px;
     margin-bottom: 5px;
     display: flex;
 }
@@ -32,4 +35,10 @@ body {
     background-position: right calc(0.375em + 0.1875rem) center;
     background-size: calc(0.75em + 0.375rem) calc(0.75em + 0.375rem);
     outline: none;
+}
+
+h6 {
+    font-size: 14px;
+    font-weight: bold;
+    line-height: 0.8;
 }

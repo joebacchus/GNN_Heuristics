@@ -4,7 +4,7 @@ os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
 from dash import Dash, dcc, html, Input, Output, State, callback
 import dash_bootstrap_components as dbc
 from commands import run_heuristica
-from support import loss_to_plot, get_files
+from support import loss_to_plot, get_files, benchmarks_reader
 ######################################################
 
 from dash import DiskcacheManager
@@ -15,27 +15,32 @@ cache.clear()
 background_callback_manager = DiskcacheManager(cache)
 
 ###################################################### SIDEBAR
+font_size = "12px"
 
-parameters = {"Node count": 32,
+parameters = {"Node count": 128,
               "K-parameter": 3,
               "P-parameter": 0.1,
               "Graph type": "Random regular",
 
-              "Model type": "Mean-field",
+              "Model type": "Belief propagation",
               "Decimation": False,
-              "Beta": 2,
+              "Beta": 1,
               "Damping": 0.9,
 
               "Tau": 1,
+              "Train parameters": True,
               "Spectral initialisation": True,
               "Learning rate": 0.001,
-              "Epochs": 100,
+              "Split method": "Greedy modularity",
+              "Split size": 1,
+              "Batch size": 100,
+              "Epochs": 300,
               "Optimizer": "Adam",
               "Non linearity": "Rectified linear unit",
               "Aggregation": "Summation",
               "GNN layers": 8,
               "GNN size": 16,
-              "GNN repeats": 16,
+              "GNN repeats": 1,
               }
 
 def section(name, parts):
@@ -73,12 +78,13 @@ def component(name, type, placeholder, *options):
                     id=name,
                     min=options[0],
                     max=options[1],
-                    step=stepper
+                    step=stepper,
+                    style={"font-size":font_size}
                     ),
-                dbc.InputGroupText(name, id=name+" label"),
+                dbc.InputGroupText(name, id=name+" label", style={"font-size":font_size}),
                 popper(name, description)
             ], size="sm")
-        ], className="numerical_input", style={"padding": "2px"})
+        ], className="numerical_input", style={"padding": "1px"})
 
     elif type == "select":
         reformed = [{"label": o, "value": o} for o in options[0]]
@@ -88,11 +94,12 @@ def component(name, type, placeholder, *options):
                     options=reformed,
                     value=placeholder,
                     id=name,
+                    style={"font-size": font_size}
                     #clearable=False,
                     ),
-                dbc.InputGroupText(name, id=name+" label"),
+                dbc.InputGroupText(name, id=name+" label", style={"font-size":font_size}),
                 popper(name, description)
-            ], size="sm", style={"padding": "2px"})
+            ], size="sm", style={"padding": "1px"})
         ])
     elif type == "switch":
         switches.append(name)
@@ -101,11 +108,11 @@ def component(name, type, placeholder, *options):
                 dbc.Button(
                     id=name,
                     n_clicks=int(placeholder),
-                    style={'flex': '1', 'width': '100%'}
+                    style={'flex': '1', 'width': '100%', "font-size":font_size}
                 ),
-                dbc.InputGroupText(name, id=name+" label"),
+                dbc.InputGroupText(name, id=name+" label", style={"font-size":font_size}),
                 popper(name, description)
-            ], size="sm", style={"padding": "2px"})
+            ], size="sm", style={"padding": "1px"})
         ])
     return output
 
@@ -115,9 +122,9 @@ def run_component(name):
             dbc.Button("Start",
                 id=name,
                 n_clicks=0,
-                style={'flex': '1', 'width': '100%'}
+                style={'flex': '1', 'width': '100%', "font-size":font_size}
             )
-        ], size="sm", style={"padding": "2px"})
+        ], size="sm", style={"padding": "1px"})
     ])
     return output
 
@@ -139,9 +146,14 @@ sections_2 = [
 
 sections_3 = [
     component("Tau", "number", parameters["Damping"],None,None,None),
+    component("Train parameters", "switch", parameters["Train parameters"]),
     component("Spectral initialisation", "switch", parameters["Spectral initialisation"]),
     component("Learning rate", "number", parameters["Learning rate"],0,None,None),
     component("Epochs", "number", parameters["Epochs"],0,None,1),
+    component("Split method", "select", parameters["Split method"],
+              ["Greedy modularity"]),
+    component("Split size", "number", parameters["Split size"],0,None,1),
+    component("Batch size", "number", parameters["Batch size"],0,None,1),
     component("Optimizer", "select", parameters["Optimizer"],
                   ["Adam"]),
     component("Non linearity", "select", parameters["Non linearity"],
@@ -166,7 +178,13 @@ sidebar = [
 
 ###################################################### GRAPHBAR
 init_losses = [[0],[0],[0]]
-init_fig, init_fig_zoom = loss_to_plot(init_losses, 0, parameters["Epochs"])
+init_benchmark = benchmarks_reader(parameters["Node count"],
+                                   parameters["K-parameter"],
+                                   parameters["P-parameter"],
+                                   parameters["Graph type"])
+init_fig, init_fig_zoom = loss_to_plot(
+    init_losses, 0, parameters["Epochs"], init_benchmark)
+
 graphbar = dcc.Graph(className="graph",
         id='Loss',
         figure=init_fig,
@@ -191,17 +209,58 @@ filebar = html.Div([
     section("Saved models", section_load),
 ])
 
+###################################################### STATBAR
+
+statbar = html.Div([
+    dbc.Badge("Current energy", color="white", text_color="primary",
+              style={"width": "auto", "margin-right": "5px", "height": "20px"},
+              id="Current energy label"),
+    dbc.Badge("Unknown", color="white", text_color="black",
+              style={"width": "100px", "margin-right": "5px", "height": "20px"},
+              id="Current energy", className="border me-1"),
+
+    dbc.Badge("Best energy", color="white", text_color="primary",
+                  style={"width": "auto", "margin-right": "5px", "height": "20px"},
+                  id="Best energy label"),
+    dbc.Badge("Unknown", color="white", text_color="black",
+              style={"width": "100px", "margin-right": "5px", "height": "20px"},
+              id="Best energy", className="border me-1"),
+
+    dbc.Badge("Benchmark energy", color="white", text_color="primary",
+                  style={"width": "auto", "margin-right": "5px", "height": "20px"},
+                  id="Benchmark label"),
+    dbc.Badge("Unknown", color="white", text_color="black",
+              style={"width": "100px", "margin-right": "5px", "height": "20px"},
+              id="Benchmark", className="border me-1"),
+
+    dbc.Badge("Current time", color="white", text_color="primary",
+              style={"width": "auto", "margin-right": "5px", "height": "20px"},
+              id="Current time label"),
+    dbc.Badge("Unknown", color="light", text_color="black",
+              style={"width": "100px", "margin-right": "5px", "height": "20px"},
+              id="Current time"),
+
+    dbc.Badge("Estimated time", color="white", text_color="primary",
+              style={"width": "auto", "margin-right": "5px", "height": "20px"},
+              id="Estimated time label"),
+    dbc.Badge("Unknown", color="light", text_color="black",
+              style={"width": "100px", "margin-right": "5px", "height": "20px"},
+              id="Estimated time")
+
+])
+
 ###################################################### INFOBAR
 
 infobar = html.Div([
     dbc.Badge("Ready", color="info", style={"width": "100px", "margin-right": "5px", "height": "20px"}, id="Status"),
     dbc.Progress(id="Progress", label=f" ", value=0, color="primary", animated=False, striped=False,
-                 style={'flex': '1', 'width': '100%',"height": "20px", "padding": "2px"})
+                 style={'flex': '1', 'width': '100%',"height": "20px", "padding": "2px"}),
 ], className="info")
 
 ###################################################### SEEBAR
 
 seebar = html.Div([
+    statbar,
     graphbar,
     graphbar_zoom,
     infobar,
@@ -213,7 +272,7 @@ seebar = html.Div([
 app = Dash(external_stylesheets=[dbc.themes.FLATLY],
            background_callback_manager=background_callback_manager)
 app.layout = html.Div([
-    dbc.Row([dbc.Col(sidebar, width=3), dbc.Col(seebar, width=9)])
+    dbc.Row([dbc.Col(sidebar, width=2), dbc.Col(seebar, width=10)])
 ])
 
 for s in switches:
@@ -256,7 +315,7 @@ def status_change(status):
     if status == "Ready":
         return "Start", "primary", False, "info"
     elif status == "Starting":
-        return "Starting", "warning", True, "warning"
+        return "Starting", "info", True, "info"
     elif status == "Training":
         return "Stop", "danger", False, "info"
     elif status == "Stopping":
@@ -284,7 +343,14 @@ def status_change(status):
         Output("Progress", "animated"),
         Output("Status", "children"),
         Output("Loss", "figure"),
-        Output("Loss zoom", "figure")
+        Output("Loss zoom", "figure"),
+
+        Output("Benchmark", "children"),
+        Output("Current energy", "children"),
+        Output("Best energy", "children"),
+
+        Output("Current time", "children"),
+        Output("Estimated time", "children")
     ],
     prevent_initial_call=True,
     #cancel=[Input("Run model", "n_clicks")]

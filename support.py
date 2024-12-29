@@ -1,4 +1,6 @@
 import torch
+import pickle
+from click import style
 from torch_geometric.data import Data
 import networkx as nx
 import dash_bootstrap_components as dbc
@@ -65,7 +67,6 @@ def translate_aggr(word):
     else:
         raise ("Unknown aggregation")
 
-
 def translate_nonl(word):
     if word == "Rectified linear unit":
         return "relu"
@@ -74,19 +75,33 @@ def translate_nonl(word):
     else:
         raise ("Unknown non-linearity")
 
+def apply_split(G, split_size, split_method):
+    if split_size > 1:
+        if split_method == "Greedy modularity":
+            splits = nx.algorithms.community.greedy_modularity_communities(G, cutoff=split_size, best_n=split_size)
+            split_graph = nx.disjoint_union_all([G.subgraph(split).copy() for split in splits])
+            return split_graph
+        else:
+            raise ("Unknown split method")
+    else:
+        return G
 
-def load_graph(n, k, p, graph_type):
+def load_graph(n, k, p, graph_type, batch_size, split_size, split_method):
     if graph_type == "Random regular":
-        data = nx.random_regular_graph(k, n)
+        data = [apply_split(nx.random_regular_graph(k, n),split_size,split_method)
+                for _ in range(batch_size)]
     elif graph_type == "Fast binomial":
-        data = nx.fast_gnp_random_graph(n, p)
+        data = [apply_split(nx.fast_gnp_random_graph(n, p),split_size,split_method)
+                for _ in range(batch_size)]
     elif graph_type == "Erdos renyi":
-        data = nx.erdos_renyi_graph(n, p)
+        data = [apply_split(nx.erdos_renyi_graph(n, p),split_size,split_method)
+                for _ in range(batch_size)]
     else:
         raise ("Unknown graph type")
+    data = nx.disjoint_union_all(data)
     return data
 
-def save_model(model_outputs):
+def save_model(model_outputs, model_stats):
     model, model_losses, model_info = model_outputs
 
     model_name = "Model_" + str(datetime.datetime.now().strftime('%d_%m-%Y_%H-%M-%S'))
@@ -95,9 +110,13 @@ def save_model(model_outputs):
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
 
+    model_stats_path = os.path.join(model_dir, 'model_stats.pkl')
     model_info_path = os.path.join(model_dir, 'model_info.npy')
     model_losses_path = os.path.join(model_dir, 'model_losses.npy')
     model_path = os.path.join(model_dir, 'model.pth')
+
+    with open(model_stats_path, 'wb') as f:
+        pickle.dump(model_stats, f)
 
     with open(model_info_path, 'wb') as f:
         np.save(f, model_info)
@@ -124,7 +143,7 @@ def load_model(model_name):
     return model_selections
 """
 
-def loss_to_plot(current_losses, epoch, epochs):
+def loss_to_plot(current_losses, epoch, epochs, benchmark):
 
     loss_df = pd.DataFrame({
         "Epoch": current_losses[0],
@@ -132,49 +151,115 @@ def loss_to_plot(current_losses, epoch, epochs):
         "Energy": current_losses[2],
     })
 
-    current_fig = px.line(loss_df, x="Epoch", y=["Loss", "Energy"])
+    if benchmark:
+        if benchmark[1]:
+            lower_value = benchmark[0] - benchmark[1] - 0.2 # Padding
+        else:
+            lower_value = benchmark[0] - 0.2 # Padding
+    else:
+        lower_value = -3 # Standard
+
+    current_fig = px.line(loss_df, x="Epoch", y=["Loss", "Energy"],
+                          color_discrete_map={"Energy": "black"})
+    current_fig_zoom = px.line(loss_df, x="Epoch", y=["Loss", "Energy"],
+                               color_discrete_map={"Energy": "black"})
+
+    if benchmark:
+        if benchmark[1]:
+            current_fig.add_hline(y=float(benchmark[0]),
+                                  line=dict(dash="solid",
+                                            color="black",
+                                            width=1),
+                                  label=dict(text="Benchmark \n (Data)", font=dict(size=10)))
+            current_fig_zoom.add_hline(y=float(benchmark[0]),
+                                       line=dict(dash="solid",
+                                                 color="black",
+                                                 width=1),
+                                       label=dict(text="Benchmark \n (Data)", font=dict(size=10)))
+        else:
+            current_fig.add_hline(y=float(benchmark[0]),
+                                  line=dict(dash="dot",
+                                            color="black",
+                                            width=1),
+                                  label=dict(text="Benchmark \n (Estimate)", font=dict(size=10)))
+            current_fig_zoom.add_hline(y=float(benchmark[0]),
+                                       line=dict(dash="dot",
+                                                 color="black",
+                                                 width=1),
+                                       label=dict(text="Benchmark \n (Estimate)", font=dict(size=10)))
+
     current_fig.update_layout(
         plot_bgcolor='white',
-        xaxis=dict(showgrid=True,gridcolor='lightgray',
-                   range=[0,epochs], dtick=epochs/10),
-        yaxis=dict(showgrid=True,gridcolor='lightgray',
-                   range=[-2,2]),
+        xaxis=dict(showgrid=True,gridcolor='#ececec',
+                   range=[0,epochs], dtick=epochs/10, tickfont = dict(size=10)),
+        yaxis=dict(showgrid=True,gridcolor='#ececec',
+                   range=[lower_value,0], dtick=0.2,tickfont = dict(size=10)),
         yaxis_title=None,
-        margin=dict(l=40, r=80, t=40, b=20),
-        legend=dict(title="Metrics"),
+        xaxis_title=dict(font=dict(size=12)),
+        margin=dict(l=50, r=50, t=20, b=20),
+        legend=dict(title="Metrics", orientation="h", font=dict(size=10)),
+        showlegend=True,
+        hovermode="x unified"
         )
     current_fig.update_traces(
+        #mode="markers+lines",
+        hovertemplate=None,
         line=dict(shape='spline', smoothing=1.3),
     )
 
-    current_fig_zoom = px.line(loss_df, x="Epoch", y=["Loss", "Energy"])
     current_fig_zoom.update_layout(
         plot_bgcolor='white',
-        xaxis=dict(showgrid=True,gridcolor='lightgray'),
-        yaxis=dict(showgrid=True,gridcolor='lightgray'),
+        xaxis=dict(showgrid=True,gridcolor='#ececec', tickfont = dict(size=10)),
+        yaxis=dict(showgrid=True,gridcolor='#ececec', tickfont = dict(size=10)),
         yaxis_title=None,
-        margin=dict(l=40, r=80, t=40, b=20),
-        legend=dict(title="Metrics")
+        xaxis_title=dict(font=dict(size=12)),
+        margin=dict(l=50, r=50, t=20, b=20),
+        legend=dict(title="Metrics",orientation="h", font=dict(size=10)),
+        showlegend=True,
+        hovermode="x unified"
         )
     current_fig_zoom.update_traces(
+        #mode="markers+lines",
+        hovertemplate=None,
         line=dict(shape='spline', smoothing=1.3),
     )
+
 
     return current_fig, current_fig_zoom
 
 def get_files():
     folder_path = 'saved'
+    
     file_list = os.listdir(folder_path)
-    files = [file for file in file_list if file[0] != '.']
+
+    files = []
+    files_best_energy = []
+    files_final_energy = []
+    files_benchmark_energy = []
+    files_training_time = []
+    for file in file_list:
+        if file[0] != '.':
+            files.append(file)
+            stats_path = 'saved/' + str(file) + '/model_stats.pkl'
+            with open(stats_path, 'rb') as f:
+                model_stats = pickle.load(f)
+            files_best_energy.append(model_stats["Best energy"])
+            files_final_energy.append(model_stats["Current energy"])
+            files_benchmark_energy.append(model_stats["Benchmark"])
+            files_training_time.append(model_stats["Training time"])
 
     data = pd.DataFrame(
         {
-            "File Name": files,
+            "Model name": files,
+            "Final energy": files_final_energy,
+            "Best energy": files_best_energy,
+            "Benchmark energy": files_benchmark_energy,
+            "Training time": files_training_time
         }
     )
     table = dbc.Table.from_dataframe(data,
                              striped=False, bordered=True, hover=True, size="sm",
-                             style={"font-size": "14px"})
+                             style={"font-size": "12px"})
 
     """
         table = dash_table.DataTable(
@@ -189,3 +274,33 @@ def get_files():
     """
 
     return table
+
+def predict_benchmark(k):
+    prediction = (k - (-9.675808573724105) ) / (-8.69340193226905)
+    return prediction
+
+def benchmarks_reader(n,k,p,graph_type):
+    if graph_type == "Random regular":
+        df = pd.read_csv("EO_benchmarks.csv")
+        count_assign = dict(df['N/K'])
+        res = dict((v, k) for k, v in count_assign.items())
+        if str(k) not in df.columns:
+            return predict_benchmark(k), None
+        if str(n) not in res.keys():
+            return predict_benchmark(k), None
+        chosen = df[str(k)][res[str(n)]]
+        if not pd.isnull(chosen):
+            value, deviation = chosen.split('(')
+            deviation = deviation.rstrip(')')
+            deviation = "0." + "0"*(len(value)-len(deviation)-2) + deviation # Rough
+            return -float(value), float(deviation)
+        else:
+            return predict_benchmark(k), None
+    else:
+        return None
+
+def time_convert(time_diff):
+    hours, remainder = divmod(time_diff, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    formatted_time = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
+    return formatted_time

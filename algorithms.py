@@ -10,6 +10,11 @@ def spectral_cut(G):
     g = np.sign(x).astype(int)
     return g # hard (-1,1) outputs
 
+def spectral_split(G, rank):
+    L = nx.laplacian_matrix(G, nodelist=range(G.number_of_nodes()))
+    x = np.real(scipy.sparse.linalg.eigs(L*1.0, k=rank, which='LM')[1]).flatten()
+    g = np.sign(x).astype(int)
+
 def energy(G, g):
     return np.sum([g[i]*g[j] for i,j in G.edges()]) / G.number_of_nodes()
 
