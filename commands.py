@@ -11,7 +11,7 @@ def run_heuristica_dud(set_progress,parameters):
     for i in tqdm(range(100)):
         time.sleep(0.1)
         progressed = int(100*i/100)
-        set_progress([progressed, f"{progressed} %", "info", False, False, "Training"])
+        set_progress([progressed, f"{progressed} %", "primary", False, False, "Training"])
     set_progress([progressed, f"100 %", "success", False, False, "Training"])
     return None, None, None
 
@@ -45,7 +45,7 @@ def run_heuristica(set_progress,mod_par):
 
     benchmark = benchmarks_reader(n,k,p,graph_type)
     current_losses = [[0],[0],[0]]
-    current_fig, current_fig_zoom = loss_to_plot(current_losses, 0, epochs, benchmark)
+    current_fig, current_fig_zoom, _ = loss_to_plot(current_losses, epochs, benchmark)
 
     energy_stats = {"Current energy": "Unknown",
                     "Best energy": "Unknown",
@@ -56,7 +56,7 @@ def run_heuristica(set_progress,mod_par):
     else:
         energy_stats["Benchmark"] = "Unknown"
 
-    set_progress([100, f" ", "info", True, True, "Starting", current_fig, current_fig_zoom,
+    set_progress([100, f" ", "primary", True, True, "Starting", current_fig, current_fig_zoom,
                   energy_stats["Benchmark"], energy_stats["Current energy"], energy_stats["Best energy"],
                   time_convert(0), "Unknown"])
 
@@ -125,7 +125,7 @@ def run_heuristica(set_progress,mod_par):
         iteration_energy = energy(G,g)
         results.append([epoch, float(loss), iteration_energy].copy())
         current_losses = np.array(results).T
-        current_fig, current_fig_zoom = loss_to_plot(current_losses, epoch, epochs, benchmark)
+        current_fig, current_fig_zoom, _ = loss_to_plot(current_losses, epochs, benchmark)
 
         energy_stats["Current energy"] = round(float(iteration_energy),6)
         # detached values no longer require gradient
@@ -139,7 +139,7 @@ def run_heuristica(set_progress,mod_par):
 
         progressed = int(epoch/epochs*100) #######
         estimated_time = time_convert((time.time() - start_time) + (time.time() - estimate_start) * (epochs - epoch))
-        set_progress([progressed, f"{progressed} %", "info", False, False, "Training", current_fig, current_fig_zoom,
+        set_progress([progressed, f"{progressed} %", "primary", False, False, "Training", current_fig, current_fig_zoom,
                       energy_stats["Benchmark"], energy_stats["Current energy"], energy_stats["Best energy"],
                       current_time, estimated_time])
         #data.x = torch.randn((G.number_of_nodes(),1))

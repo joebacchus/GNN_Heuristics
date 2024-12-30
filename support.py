@@ -4,7 +4,7 @@ from click import style
 from torch_geometric.data import Data
 import networkx as nx
 import dash_bootstrap_components as dbc
-# from dash import dash_table
+from dash import html
 
 import datetime
 import pandas as pd
@@ -111,42 +111,25 @@ def save_model(model_outputs, model_stats):
         os.makedirs(model_dir)
 
     model_stats_path = os.path.join(model_dir, 'model_stats.pkl')
-    model_info_path = os.path.join(model_dir, 'model_info.npy')
-    model_losses_path = os.path.join(model_dir, 'model_losses.npy')
+    model_info_path = os.path.join(model_dir, 'model_parameters.pkl')
+    model_losses_path = os.path.join(model_dir, 'model_losses.pkl')
     model_path = os.path.join(model_dir, 'model.pth')
 
     with open(model_stats_path, 'wb') as f:
         pickle.dump(model_stats, f)
 
     with open(model_info_path, 'wb') as f:
-        np.save(f, model_info)
+        pickle.dump(model_info, f)
 
     with open(model_losses_path, 'wb') as f:
-        np.save(f, model_losses)
+        pickle.dump(model_losses, f)
 
     torch.save(model.state_dict(), model_path)
 
-"""
-def load_model(model_name):
-    model_losses = np.load(
-        f"models/{model_name}/model_losses.npy", allow_pickle=True)
-    model_info = np.load(
-        f"models/{model_name}/model_info.npy", allow_pickle=True)
-    model = th.load(
-        f"models/{model_name}/model", weights_only=False)
-
-    model_selections = {"Model": model,
-                        "Model Info": model_info,
-                        "Model Losses": model_losses,
-                        }
-
-    return model_selections
-"""
-
-def loss_to_plot(current_losses, epoch, epochs, benchmark):
+def loss_to_plot(current_losses, epochs, benchmark):
 
     loss_df = pd.DataFrame({
-        "Epoch": current_losses[0],
+        "Epoch": list(np.array(current_losses[0])+1),
         "Loss": current_losses[1],
         "Energy": current_losses[2],
     })
@@ -191,7 +174,7 @@ def loss_to_plot(current_losses, epoch, epochs, benchmark):
     current_fig.update_layout(
         plot_bgcolor='white',
         xaxis=dict(showgrid=True,gridcolor='#ececec',
-                   range=[0,epochs], dtick=epochs/10, tickfont = dict(size=10)),
+                   range=[1,epochs], dtick=epochs/10, tickfont = dict(size=10)),
         yaxis=dict(showgrid=True,gridcolor='#ececec',
                    range=[lower_value,0], dtick=0.2,tickfont = dict(size=10)),
         yaxis_title=None,
@@ -225,7 +208,39 @@ def loss_to_plot(current_losses, epoch, epochs, benchmark):
     )
 
 
-    return current_fig, current_fig_zoom
+    return current_fig, current_fig_zoom, current_losses
+
+def general_table(inputs):
+    titles = list(inputs.keys())
+    model_count = len(list(inputs.values())[0])
+
+    table_header = [
+        html.Thead(html.Tr([html.Th(title) for title in titles]))
+    ]
+
+    rows = []
+    for r in range(model_count):
+        pieces = [list(inputs[t])[r] for t in titles]
+        rows.append(html.Tr([html.Td(item) for item in pieces]))
+
+    table_body = [html.Tbody(rows)]
+
+    table = dbc.Table(table_header + table_body,
+                      striped=False, bordered=True, hover=True, size="sm",
+                      style={"font-size": "12px", "text-align": "center", "vertical-align": "middle"})
+
+    return table
+
+def load_parameters(file):
+    file_path_params = 'saved/' + str(file) + '/model_parameters.pkl'
+    with open(file_path_params, 'rb') as f:
+        file_params = pickle.load(f)
+
+    file_path_losses = 'saved/' + str(file) + '/model_losses.pkl'
+    with open(file_path_losses, 'rb') as f:
+        file_losses = pickle.load(f)
+
+    return file_params, file_losses
 
 def get_files():
     folder_path = 'saved'
@@ -237,6 +252,7 @@ def get_files():
     files_final_energy = []
     files_benchmark_energy = []
     files_training_time = []
+    load_buttons = []
     for file in file_list:
         if file[0] != '.':
             files.append(file)
@@ -248,30 +264,37 @@ def get_files():
             files_benchmark_energy.append(model_stats["Benchmark"])
             files_training_time.append(model_stats["Training time"])
 
-    data = pd.DataFrame(
-        {
+            button_group = html.Div([dbc.ButtonGroup(
+                [
+                    dbc.Button("Load parameters", outline=True, color="primary",
+                               id={"type": "Load parameters", "index": str(file)}, style={"font-size": "12px"}),
+                    dbc.Button("Load results", outline=True, color="primary",
+                               id={"type": "Load results", "index": str(file)}, style={"font-size": "12px"}),
+                    dbc.Button("Load model", outline=False, color="primary",
+                               id={"type": "Load model", "index": str(file)}, style={"font-size": "12px"})
+                ], id={"type": "Button group", "index": str(file)}, size="sm"
+            ), dbc.Button([html.I(className="bi bi-x-circle me-2"), "Delete"], outline=False, color="danger", size="sm",
+                               id={"type": "Delete model", "index": str(file)}, style={"font-size": "12px", "margin-left":"10px"})],
+            )
+
+            load_buttons.append(button_group)
+
+    data = {
             "Model name": files,
             "Final energy": files_final_energy,
             "Best energy": files_best_energy,
             "Benchmark energy": files_benchmark_energy,
-            "Training time": files_training_time
-        }
-    )
-    table = dbc.Table.from_dataframe(data,
-                             striped=False, bordered=True, hover=True, size="sm",
-                             style={"font-size": "12px"})
+            "Training time": files_training_time,
+            "Options": load_buttons
+             }
 
     """
-        table = dash_table.DataTable(
-        id='Table',
-        columns=[
-            {'name': col, 'id': col} for col in data.columns
-        ],
-        data=data.to_dict('records'),
-        sort_action='native',
-        style_table={'height': '300px', 'overflowY': 'auto'},
-    )
+    table = dbc.Table.from_dataframe(pd.DataFrame(data),
+                             striped=False, bordered=True, hover=True, size="sm",
+                             style={"font-size": "12px"})
     """
+
+    table = general_table(data)
 
     return table
 
