@@ -1,22 +1,12 @@
 from algorithms import *
 from support import *
-from tqdm import tqdm
 import time
 
-from support import loss_to_plot, save_model, time_convert
+from plot_support import loss_to_plot, benchmarks_reader
+from algorithms_support import make_bp_data
 
-def run_heuristica_dud(set_progress,parameters):
-    set_progress([100, f" ", "info", True, True, "Starting"])
-    time.sleep(1)
-    for i in tqdm(range(100)):
-        time.sleep(0.1)
-        progressed = int(100*i/100)
-        set_progress([progressed, f"{progressed} %", "primary", False, False, "Training"])
-    set_progress([progressed, f"100 %", "success", False, False, "Training"])
-    return None, None, None
 
-def run_heuristica(set_progress,mod_par):
-
+def run_heuristica(set_progress, mod_par):
     n = int(mod_par['Node count'])
     k = int(mod_par['K-parameter'])
     p = float(mod_par['P-parameter'])
@@ -43,8 +33,8 @@ def run_heuristica(set_progress,mod_par):
     hidden_size = int(mod_par['GNN size'])
     repeat_layers = int(mod_par['GNN repeats'])
 
-    benchmark = benchmarks_reader(n,k,p,graph_type)
-    current_losses = [[0],[0],[0]]
+    benchmark = benchmarks_reader(n, k, p, graph_type)
+    current_losses = [[0], [0], [0]]
     current_fig, current_fig_zoom, _ = loss_to_plot(current_losses, epochs, benchmark)
 
     energy_stats = {"Current energy": "Unknown",
@@ -52,7 +42,7 @@ def run_heuristica(set_progress,mod_par):
                     "Benchmark": "Unknown"}
 
     if benchmark:
-        energy_stats["Benchmark"] = float(np.round(float(benchmark[0]),6))
+        energy_stats["Benchmark"] = float(np.round(float(benchmark[0]), 6))
     else:
         energy_stats["Benchmark"] = "Unknown"
 
@@ -70,13 +60,13 @@ def run_heuristica(set_progress,mod_par):
 
     if model_type == "Pure":
         model = GNN(hidden_size=hidden_size, num_layers=num_layers,
-                    non_linearity=non_linearity, aggregation=aggregation, K=1,)
+                    non_linearity=non_linearity, aggregation=aggregation, K=1, )
     elif model_type == "Mean-field":
         model = MFGNN(hidden_size=hidden_size, num_layers=num_layers,
                       non_linearity=non_linearity, aggregation=aggregation, K=1)
     elif model_type == "Belief propagation":
         model = BPGNN(hidden_size=hidden_size, num_layers=num_layers,
-                      non_linearity=non_linearity,aggregation=aggregation, K=1)
+                      non_linearity=non_linearity, aggregation=aggregation, K=1)
     else:
         raise ("Unknown model")
 
@@ -84,9 +74,13 @@ def run_heuristica(set_progress,mod_par):
         model.d = torch.nn.Parameter(torch.tensor(torch.math.exp(beta)))
         model.df = torch.nn.Parameter(torch.tensor(damping))
         model.tau = torch.nn.Parameter(torch.tensor(tau))
-        out_d = model.d; out_df = model.df; out_tau = model.tau
+        out_d = model.d;
+        out_df = model.df;
+        out_tau = model.tau
     else:
-        out_d = torch.tensor(torch.math.exp(beta)); out_df = torch.tensor(damping); out_tau = torch.tensor(tau)
+        out_d = torch.tensor(torch.math.exp(beta));
+        out_df = torch.tensor(damping);
+        out_tau = torch.tensor(tau)
 
     if optimizer == "Adam":
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -103,31 +97,30 @@ def run_heuristica(set_progress,mod_par):
     for epoch in range(epochs):
         estimate_start = time.time()
         current_time = time_convert(time.time() - start_time)
-        model.train() # Informs that the model is training
-        optimizer.zero_grad() # Reset gradients
+        model.train()  # Informs that the model is training
+        optimizer.zero_grad()  # Reset gradients
 
         # Attached to a sequence of torch encoded functions that define loss
-        loss = model.energy(data, tau=out_tau, num_its = repeat_layers, d=out_d, df=out_df)
+        loss = model.energy(data, tau=out_tau, num_its=repeat_layers, d=out_d, df=out_df)
 
-        loss.backward() # Calculate gradients
+        loss.backward()  # Calculate gradients
 
-        optimizer.step() # Adjust weights parameters
+        optimizer.step()  # Adjust weights parameters
 
         # Forward pass to evaluate new values
-        x = model.forward(data, num_its = repeat_layers, d=out_d, df=out_df).detach()
+        x = model.forward(data, num_its=repeat_layers, d=out_d, df=out_df).detach()
 
-        data.x[:,-1] = x[:,0] # update data x
+        data.x[:, -1] = x[:, 0]  # update data x
 
         # Sign is equivalent to argmax for 2-coloring
-        g = np.sign(x.numpy().flatten()) # Projecting the results for real energy calculation
+        g = np.sign(x.numpy().flatten())  # Projecting the results for real energy calculation
 
-
-        iteration_energy = energy(G,g)
+        iteration_energy = energy(G, g)
         results.append([epoch, float(loss), iteration_energy].copy())
         current_losses = np.array(results).T
         current_fig, current_fig_zoom, _ = loss_to_plot(current_losses, epochs, benchmark)
 
-        energy_stats["Current energy"] = round(float(iteration_energy),6)
+        energy_stats["Current energy"] = round(float(iteration_energy), 6)
         # detached values no longer require gradient
         if loss.detach().numpy() < best_loss:
             best_loss = loss.detach().numpy()
@@ -137,12 +130,12 @@ def run_heuristica(set_progress,mod_par):
             energy_stats["Best energy"] = round(float(iteration_energy), 6)
             best_energy = iteration_energy
 
-        progressed = int(epoch/epochs*100) #######
+        progressed = int(epoch / epochs * 100)  #######
         estimated_time = time_convert((time.time() - start_time) + (time.time() - estimate_start) * (epochs - epoch))
         set_progress([progressed, f"{progressed} %", "primary", False, False, "Training", current_fig, current_fig_zoom,
                       energy_stats["Benchmark"], energy_stats["Current energy"], energy_stats["Best energy"],
                       current_time, estimated_time])
-        #data.x = torch.randn((G.number_of_nodes(),1))
+        # data.x = torch.randn((G.number_of_nodes(),1))
 
         """
         for i,param in enumerate(model.parameters()):
