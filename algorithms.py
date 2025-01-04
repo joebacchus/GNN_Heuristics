@@ -66,9 +66,11 @@ def decimate(model, node_order, data1, verbose=True):
 
 class GNN(torch.nn.Module):
 
-    def __init__(self, hidden_size, num_layers, non_linearity, aggregation, K=1):
+    def __init__(self, hidden_size, num_layers, non_linearity, aggregation, K, annealing):
         super().__init__()
         self.K = K  # Number of colors so K=1 is for 2-coloring
+        self.num_layers = num_layers
+        self.annealing = annealing
         self.input = GraphConv(K, hidden_size, aggr=aggregation)
         self.layers = torch.nn.ModuleList([])
         for l in range(num_layers):
@@ -90,6 +92,7 @@ class GNN(torch.nn.Module):
 
     def forward(self, data, num_its, d, df):
         x, edge_index = data.x, data.edge_index
+        x = x.to(torch.float)
         h = self.input(x, edge_index)
         for s in range(num_its):
             for l in range(len(self.layers)):  # Going through every layer
@@ -121,13 +124,21 @@ class GNN(torch.nn.Module):
 class MFGNN(GNN):
 
     def forward(self, data, num_its, d, df):
+
+        if self.annealing:
+            out_drange = torch.linspace(0, d.log(), self.num_layers).exp()
+        else:
+            out_d = d
+
         x, edge_index = data.x, data.edge_index
         cl, pr = data.clamped, data.prior
         x = clamp(x, cl, pr)
         h = self.input(x, edge_index)
         for s in range(num_its):
             for l in range(len(self.layers)):
-                x = clamp(mf(x, edge_index, d=d, df=df), cl, pr)  # separate mp line of input
+                if self.annealing:
+                    out_d = out_drange[l]
+                x = clamp(mf(x, edge_index, d=out_d, df=df), cl, pr)  # separate mp line of input
                 h = self.nonlin(self.layers[l](h, edge_index))  # gnn line of input
                 x, h = torch.split(self.agg(torch.cat([x, h], dim=1)),  # combine lines
                                    [self.K, h.shape[1]], dim=1)
@@ -138,6 +149,12 @@ class MFGNN(GNN):
 class BPGNN(GNN):
 
     def forward(self, data, num_its, d, df):
+
+        if self.annealing:
+            out_drange = torch.linspace(0, d.log(), self.num_layers).exp()
+        else:
+            out_d = d
+
         m_ind = data.message_index
         pr = data.prior[data.edge_index[1]]
         cl = data.clamped[data.edge_index[1]]
@@ -146,15 +163,21 @@ class BPGNN(GNN):
         mx = clamp(mf(mx, m_ind, d=d, df=df), cl, pr)
         for s in range(num_its):
             for l in range(len(self.layers)):
-                mx = clamp(mf(mx, m_ind, d=d, df=df), cl, pr)  # Still meanfield but on different indices
+                if self.annealing:
+                    out_d = out_drange[l]
+                mx = clamp(mf(mx, m_ind, d=out_d, df=df), cl, pr)  # Still meanfield but on different indices
                 h = self.nonlin(self.layers[l](h, m_ind))  # Different edge index input
                 mx, h = torch.split(self.agg(torch.cat([mx, h], dim=1)),
                                     [self.K, h.shape[1]], dim=1)
                 mx = clamp(mx, cl, pr)
         p = clamp(self.output(torch.cat([mx, h], dim=1)), cl, pr).sigmoid()
-        tmp = (p / d + (1 - p) * d).log() - (p * d + (1 - p) / d).log()
+
+        tmp = (p / out_d + (1 - p) * out_d).log() - (p * out_d + (1 - p) / out_d).log()
+
         N = data.node_agg_index
         x = torch.zeros(data.num_nodes, 1).scatter_reduce(
             0, N[0].unsqueeze(1).expand(-1, 1), tmp[N[1]], "sum")
         # x = torch.zeros(data.x.shape).scatter_reduce(0, N[0].unsqueeze(1).expand(-1, data.x.shape[1]), tmp[N[1]], "sum")
         return clamp(x, data.clamped, data.prior)
+
+

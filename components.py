@@ -1,15 +1,16 @@
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 from support import get_files
-from plot_support import loss_to_plot, benchmarks_reader
+from plot_support import loss_to_plot, benchmarks_reader, adapt_to_plot
 
 
 def init_globals(init_parameters):
-    global global_parameters, pieces, switches, current_losses
+    global global_parameters, pieces, switches, current_losses, current_adapt
     global_parameters = init_parameters.copy()
     pieces = []
     switches = []
-    current_losses = [[0], [0], [0]]
+    current_losses = [[0], [0], [0], [0]]
+    current_adapt = [[0], [0], [0]]
 
 
 def popper(name, description):
@@ -137,7 +138,7 @@ def iconify(status):
         return [html.I(style={"display": "none"}), status]
 
 
-def sections_train(alt, parameters):
+def sections_bundle(alt, parameters):
     if alt == None:
         run_name = "Train model"
     elif alt == "test":
@@ -156,6 +157,7 @@ def sections_train(alt, parameters):
         component("Model type", alt, "select", parameters["Model type"],
                   ["Pure", "Mean-field", "Belief propagation"]),
         component("Decimation", alt, "switch", parameters["Decimation"]),
+        component("Annealing", alt, "switch", parameters["Annealing"]),
         component("Beta", alt, "number", parameters["Beta"], None, None, None),
         component("Damping", alt, "number", parameters["Damping"], 0, 1, None)
     ]
@@ -196,19 +198,14 @@ def sections_train(alt, parameters):
     return sidebar
 
 
-def load_layout(parameters, graph_parameters, losses, status_set):
+def load_layout(parameters, graph_parameters, losses, adaptive_units, status_set):
     global pieces, switches, current_losses
 
     ###################################################### TABS
 
-    sidebar_tabs = dbc.Tabs([
-        dbc.Tab(sections_train(None, parameters), label="Train", className="tab",
-                label_style={"color": "black", "font-weight": "bolder"},
-                tab_style={"border-color": "#ececec"}),
-        dbc.Tab(sections_train("test", parameters), label="Test", className="tab",
-                label_style={"color": "black", "font-weight": "bolder"},
-                tab_style={"border-color": "#ececec"}),
-    ], style={"margin-bottom": "5px", "font-size": "14px"}, className="tab")
+
+
+    sidebar = sections_bundle(None, parameters)
 
     ###################################################### GRAPHBAR
 
@@ -232,11 +229,34 @@ def load_layout(parameters, graph_parameters, losses, status_set):
                               style={'height': '300px'}
                               )
 
+    ###################################################### ADAPTBAR
+    beta_fig, damping_fig, tau_fig, current_adapt = adapt_to_plot(losses, graph_parameters["Epochs"], adaptive_units)
+    beta_fig_graph = dcc.Graph(className="graph",
+                         id='Beta fig',
+                         figure=beta_fig,
+                         config={'displayModeBar': False},
+                         style={'height': '100px'}
+                         )
+    damping_fig_graph = dcc.Graph(className="graph",
+                         id='Damping fig',
+                         figure=damping_fig,
+                         config={'displayModeBar': False},
+                         style={'height': '100px'}
+                         )
+    tau_fig_graph = dcc.Graph(className="graph",
+                         id='Tau fig',
+                         figure=tau_fig,
+                         config={'displayModeBar': False},
+                         style={'height': '100px'}
+                         )
+
+    adaptive_bundle = html.Div([beta_fig_graph, damping_fig_graph, tau_fig_graph])
+
     ###################################################### FILEBAR
 
     section_load = html.Div(
         children=get_files(), id="Files",
-        style={'height': '192px', 'overflowY': 'auto'}
+        style={'height': '150px', 'overflowY': 'auto'}
     )
 
     filebar = html.Div([
@@ -301,12 +321,24 @@ def load_layout(parameters, graph_parameters, losses, status_set):
 
     navbar =  dbc.Badge("Heuristica", color="primary", className="nav") ###
 
+
+    ##################################################### SEETABS
+
+    seetabs = dbc.Tabs([
+        dbc.Tab(graphbar, label="Energies", className="tab",
+                label_style={"color": "black", "font-weight": "bolder"},
+                tab_style={"border-color": "#ececec"}),
+        dbc.Tab(adaptive_bundle, label="Parameters", className="tab",
+                label_style={"color": "black", "font-weight": "bolder"},
+                tab_style={"border-color": "#ececec"}),
+    ], style={"margin-top": "10px", "font-size": "12px"}, className="tab")
+
     ###################################################### SEEBAR
 
     seebar = html.Div([
         statbar,
-        graphbar,
         graphbar_zoom,
+        seetabs,
         infobar,
         filebar
     ])
@@ -316,7 +348,7 @@ def load_layout(parameters, graph_parameters, losses, status_set):
     out = html.Div([
         dcc.Location(id='url-refresh', refresh=True),
         #dbc.Row([navbar]),
-        dbc.Row([dbc.Col(sidebar_tabs, width=2), dbc.Col(seebar, width=10)])
+        dbc.Row([dbc.Col(sidebar, width=2), dbc.Col(seebar, width=10)])
     ])
 
     return out

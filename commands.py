@@ -2,11 +2,11 @@ from algorithms import *
 from support import *
 import time
 
-from plot_support import loss_to_plot, benchmarks_reader
+from plot_support import loss_to_plot, benchmarks_reader, adapt_to_plot
 from algorithms_support import make_bp_data
 
 
-def run_heuristica(set_progress, mod_par):
+def train_heuristica(set_progress, mod_par):
     n = int(mod_par['Node count'])
     k = int(mod_par['K-parameter'])
     p = float(mod_par['P-parameter'])
@@ -14,9 +14,9 @@ def run_heuristica(set_progress, mod_par):
 
     model_type = str(mod_par['Model type'])
     # decimation = bool(mod_par['Decimation'])
+    annealing = bool(mod_par['Annealing'])
     beta = float(mod_par['Beta'])
     damping = float(mod_par['Damping'])
-    # anneal_boost = bool(mod_par['Anneal']) ###
 
     tau = float(mod_par['Tau'])
     train_parameters = float(mod_par['Train parameters'])
@@ -34,7 +34,7 @@ def run_heuristica(set_progress, mod_par):
     repeat_layers = int(mod_par['GNN repeats'])
 
     benchmark = benchmarks_reader(n, k, p, graph_type)
-    current_losses = [[0], [0], [0]]
+    current_losses = [[0], [0], [0], [0]]
     current_fig, current_fig_zoom, _ = loss_to_plot(current_losses, epochs, benchmark)
 
     energy_stats = {"Current energy": "Unknown",
@@ -46,10 +46,6 @@ def run_heuristica(set_progress, mod_par):
     else:
         energy_stats["Benchmark"] = "Unknown"
 
-    set_progress([100, f" ", "primary", True, True, "Starting", current_fig, current_fig_zoom,
-                  energy_stats["Benchmark"], energy_stats["Current energy"], energy_stats["Best energy"],
-                  time_convert(0), "Unknown"])
-
     G = load_graph(n, k, p, graph_type, batch_size, split_size, split_method)
     data = make_bp_data(G, K=1)
     if spectral_cut_switch:
@@ -60,13 +56,16 @@ def run_heuristica(set_progress, mod_par):
 
     if model_type == "Pure":
         model = GNN(hidden_size=hidden_size, num_layers=num_layers,
-                    non_linearity=non_linearity, aggregation=aggregation, K=1, )
+                    non_linearity=non_linearity, aggregation=aggregation, K=1,
+                    annealing=annealing)
     elif model_type == "Mean-field":
         model = MFGNN(hidden_size=hidden_size, num_layers=num_layers,
-                      non_linearity=non_linearity, aggregation=aggregation, K=1)
+                      non_linearity=non_linearity, aggregation=aggregation, K=1,
+                      annealing=annealing)
     elif model_type == "Belief propagation":
         model = BPGNN(hidden_size=hidden_size, num_layers=num_layers,
-                      non_linearity=non_linearity, aggregation=aggregation, K=1)
+                      non_linearity=non_linearity, aggregation=aggregation, K=1,
+                      annealing=annealing)
     else:
         raise ("Unknown model")
 
@@ -74,12 +73,12 @@ def run_heuristica(set_progress, mod_par):
         model.d = torch.nn.Parameter(torch.tensor(torch.math.exp(beta)))
         model.df = torch.nn.Parameter(torch.tensor(damping))
         model.tau = torch.nn.Parameter(torch.tensor(tau))
-        out_d = model.d;
-        out_df = model.df;
+        out_d = model.d
+        out_df = model.df
         out_tau = model.tau
     else:
-        out_d = torch.tensor(torch.math.exp(beta));
-        out_df = torch.tensor(damping);
+        out_d = torch.tensor(torch.math.exp(beta))
+        out_df = torch.tensor(damping)
         out_tau = torch.tensor(tau)
 
     if optimizer == "Adam":
@@ -92,9 +91,20 @@ def run_heuristica(set_progress, mod_par):
     best_loss = 100
     best_energy = 100
 
+    adaptive_send = [[np.log(out_d.detach().numpy()),
+                      np.array(out_df.detach().numpy()),
+                      np.array(out_tau.detach().numpy())]]
+    adaptive_parameters = []
+    beta_fig, damping_fig, tau_fig, _ = adapt_to_plot(current_losses, epochs, np.array(adaptive_send).T)
+
+    set_progress([100, f" ", "primary", True, True, "Starting", current_fig, current_fig_zoom,
+                  energy_stats["Benchmark"], energy_stats["Current energy"], energy_stats["Best energy"],
+                  time_convert(0), "Unknown", beta_fig, damping_fig, tau_fig])
+
     start_time = time.time()
 
     for epoch in range(epochs):
+
         estimate_start = time.time()
         current_time = time_convert(time.time() - start_time)
         model.train()  # Informs that the model is training
@@ -116,7 +126,7 @@ def run_heuristica(set_progress, mod_par):
         g = np.sign(x.numpy().flatten())  # Projecting the results for real energy calculation
 
         iteration_energy = energy(G, g)
-        results.append([epoch, float(loss), iteration_energy].copy())
+        results.append([epoch, float(loss), iteration_energy, test_heuristica(model, mod_par)].copy())
         current_losses = np.array(results).T
         current_fig, current_fig_zoom, _ = loss_to_plot(current_losses, epochs, benchmark)
 
@@ -132,9 +142,16 @@ def run_heuristica(set_progress, mod_par):
 
         progressed = int(epoch / epochs * 100)  #######
         estimated_time = time_convert((time.time() - start_time) + (time.time() - estimate_start) * (epochs - epoch))
+
+        adaptive_parameters.append([np.log(out_d.detach().numpy()),
+                                    np.array(out_df.detach().numpy()),
+                                    np.array(out_tau.detach().numpy())])
+        adaptive_send = np.array(adaptive_parameters).T
+        beta_fig, damping_fig, tau_fig, _ = adapt_to_plot(current_losses, epochs, adaptive_send)
+
         set_progress([progressed, f"{progressed} %", "primary", False, False, "Training", current_fig, current_fig_zoom,
                       energy_stats["Benchmark"], energy_stats["Current energy"], energy_stats["Best energy"],
-                      current_time, estimated_time])
+                      current_time, estimated_time, beta_fig, damping_fig, tau_fig])
         # data.x = torch.randn((G.number_of_nodes(),1))
 
         """
@@ -147,7 +164,55 @@ def run_heuristica(set_progress, mod_par):
 
     set_progress([100, f"100 %", "success", False, False, "Training", current_fig, current_fig_zoom,
                   energy_stats["Benchmark"], energy_stats["Current energy"], energy_stats["Best energy"],
-                  run_time, run_time])
+                  run_time, run_time, beta_fig, damping_fig, tau_fig])
 
-    output = [best_model, current_losses, mod_par]
+    output = [best_model, current_losses, adaptive_send, mod_par]
     save_model(output, energy_stats)
+
+def test_heuristica(model_trained, mod_par):
+    n = int(mod_par['Node count'])
+    k = int(mod_par['K-parameter'])
+    p = float(mod_par['P-parameter'])
+    graph_type = str(mod_par['Graph type'])
+
+    model_type = str(mod_par['Model type'])
+    # decimation
+    # annealing
+    beta = float(mod_par['Beta'])
+    damping = float(mod_par['Damping'])
+
+    # tau
+    # train_parameters
+    spectral_cut_switch = bool(mod_par['Spectral initialisation'])
+    # learning rate
+    split_method = str(mod_par['Split method'])
+    split_size = int(mod_par['Split size'])
+    batch_size = int(mod_par['Batch size'])
+    # optimizer
+    # non_linearity
+    # aggregation
+    # num_layers
+    # hidden_size
+    repeat_layers = int(mod_par['GNN repeats'])
+
+    G = load_graph(n, k, p, graph_type, batch_size, split_size, split_method)
+    data = make_bp_data(G, K=1)
+    if spectral_cut_switch:
+        g = spectral_cut(G)
+        data.x = torch.tensor(g).reshape(data.x.shape)
+    data.clamped[0] = 1
+    data.prior[0] = 10.0 * np.sign(data.x[0][0])
+
+    if model_type != "Pure":
+        d = model_trained.d
+        df = model_trained.df
+    else:
+        d = torch.tensor(torch.math.exp(beta))
+        df = damping
+
+    model_trained.eval()
+    x = model_trained.forward(data, num_its=repeat_layers, d=d, df=df).detach()
+    data.x[:, -1] = x[:, 0]  # update data x
+    g = np.sign(x.numpy().flatten())
+
+    return energy(G, g)

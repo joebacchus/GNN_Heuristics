@@ -61,15 +61,19 @@ def load_parameters(file):
     with open(file_path_params, 'rb') as f:
         file_params = pickle.load(f)
 
+    file_path_adapt = 'saved/' + str(file) + '/model_adapt.pkl'
+    with open(file_path_adapt, 'rb') as f:
+        file_adapt = pickle.load(f)
+
     file_path_losses = 'saved/' + str(file) + '/model_losses.pkl'
     with open(file_path_losses, 'rb') as f:
         file_losses = pickle.load(f)
 
-    return file_params, file_losses
+    return file_params, file_losses, file_adapt
 
 
 def save_model(model_outputs, model_stats):
-    model, model_losses, model_info = model_outputs
+    model, model_losses, model_adapt, model_info = model_outputs
 
     model_name = "Model_" + str(datetime.datetime.now().strftime('%d_%m-%Y_%H-%M-%S'))
     model_dir = f'saved/{model_name}'
@@ -80,6 +84,7 @@ def save_model(model_outputs, model_stats):
     model_stats_path = os.path.join(model_dir, 'model_stats.pkl')
     model_info_path = os.path.join(model_dir, 'model_parameters.pkl')
     model_losses_path = os.path.join(model_dir, 'model_losses.pkl')
+    model_adapt_path = os.path.join(model_dir, 'model_adapt.pkl')
     model_path = os.path.join(model_dir, 'model.pth')
 
     with open(model_stats_path, 'wb') as f:
@@ -91,8 +96,15 @@ def save_model(model_outputs, model_stats):
     with open(model_losses_path, 'wb') as f:
         pickle.dump(model_losses, f)
 
+    with open(model_adapt_path, 'wb') as f:
+        pickle.dump(model_adapt, f)
+
     torch.save(model.state_dict(), model_path)
 
+def load_model(model_name):
+    model_dir = f'saved/{str(model_name)}/model'
+    model = torch.load(model_dir, weights_only=False)
+    return model
 
 def general_table(inputs):
     titles = list(inputs.keys())

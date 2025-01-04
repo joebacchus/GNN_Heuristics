@@ -4,8 +4,8 @@ os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
 
 from dash import Dash, Input, Output, State, callback, ctx, ALL, no_update
 import dash_bootstrap_components as dbc
-from commands import run_heuristica
-from support import get_files, load_parameters
+from commands import train_heuristica
+from support import get_files, load_parameters, load_model
 from components import load_layout, iconify, init_globals
 import components
 
@@ -23,6 +23,7 @@ init_parameters = {"Node count": 512,
 
                    "Model type": "Belief propagation",
                    "Decimation": False,
+                   "Annealing": False,
                    "Beta": 2,
                    "Damping": 0.9,
 
@@ -47,7 +48,7 @@ init_globals(init_parameters)
 app = Dash(external_stylesheets=[dbc.themes.FLATLY, dbc.icons.BOOTSTRAP],
            background_callback_manager=background_callback_manager)
 
-app.layout = load_layout(init_parameters, init_parameters, [[0], [0], [0]], "Ready")
+app.layout = load_layout(init_parameters, init_parameters, [[0], [0], [0], [0]], [[0], [0], [0]], "Ready")
 
 for s in components.switches:
     @callback(
@@ -98,16 +99,19 @@ def table_options(cancelled_status, param_clicks, result_clicks, model_clicks, d
         file_id = trigger['index']
 
         if trigger['type'] == 'Load parameters':
-            components.global_parameters, _ = load_parameters(file_id)
+            components.global_parameters, _, _ = load_parameters(file_id)
             app.layout = load_layout(components.global_parameters.copy(), components.global_parameters.copy(),
-                                     [[0], [0], [0]], "Loaded")
+                                     [[0], [0], [0], [0]], [[0], [0], [0]], "Loaded")
             return "/"
 
         elif trigger['type'] == 'Load results':
-            graph_parameters, file_losses = load_parameters(file_id)
-            app.layout = load_layout(components.global_parameters.copy(), graph_parameters.copy(), file_losses,
-                                     "Loaded")
+            graph_parameters, file_losses, file_adapt = load_parameters(file_id)
+            app.layout = load_layout(components.global_parameters.copy(), graph_parameters.copy(),
+                                     file_losses, file_adapt, "Loaded")
             return "/"
+
+        elif trigger['type'] == 'Load model':
+            model_loaded = load_model(file_id)
 
         elif trigger['type'] == 'Delete model':
             delete_path = "saved/" + file_id
@@ -117,7 +121,7 @@ def table_options(cancelled_status, param_clicks, result_clicks, model_clicks, d
                     os.remove(file_path)
             os.rmdir(delete_path)
             app.layout = load_layout(components.global_parameters.copy(), components.global_parameters.copy(),
-                                     components.current_losses, "Ready")
+                                     components.current_losses, components.current_adapt, "Ready")
             return "/"
 
     return no_update
@@ -172,7 +176,11 @@ def status_change(status):
         Output("Best energy", "children"),
 
         Output("Current time", "children"),
-        Output("Estimated time", "children")
+        Output("Estimated time", "children"),
+
+        Output("Beta fig", "figure"),
+        Output("Damping fig", "figure"),
+        Output("Tau fig", "figure")
     ],
     prevent_initial_call=True,
     cancel=[Input("Cancelled", "children")],
@@ -183,7 +191,7 @@ def run_process(set_progress, status_value, run_clicks):
     if run_clicks == 1 and (status_value == "Ready" or status_value == "Stopped" or
                             status_value == "Finished" or status_value == "Loaded"):
         cache.clear()
-        run_heuristica(set_progress, components.global_parameters)
+        train_heuristica(set_progress, components.global_parameters)
         return "Finished", 0, get_files(), "True"
 
 
